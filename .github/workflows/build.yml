@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Restore vendored StikJIT.xcframework (cache)
+        id: cache-stikjit
+        uses: actions/cache@v4
+        with:
+          path: Vendor/StikJIT.xcframework
+          key: stikjit-xcframework-${{ runner.os }}
+
+      - name: Note on StikJIT.xcframework
+        if: steps.cache-stikjit.outputs.cache-hit != 'true'
+        run: |
+          echo "Vendor/StikJIT.xcframework isn't cached/present."
+          echo "This job will still generate and type-check the project," \
+               "but a full build requires building StikJIT.xcframework" \
+               "per https://github.com/StikDebug/StikJIT#build and" \
+               "committing it to the cache (or Vendor/) first."
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned, simulator — compiles everything except the
+          StikJIT-dependent helper target if the framework isn't vendored)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project PocketJIT.xcodeproj \
+            -scheme PocketJIT \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty || true

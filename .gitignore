@@ -1,0 +1,14 @@
+# XcodeGen output
+PocketJIT.xcodeproj/
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Vendored binary framework (fetch/build locally, see README)
+Vendor/
+
+# macOS
+.DS_Store
