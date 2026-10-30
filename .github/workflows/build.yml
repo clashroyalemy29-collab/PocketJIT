@@ -1,45 +1,68 @@
-name: Build
+
+name: Build PocketJIT
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-15
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout PocketJIT
+        uses: actions/checkout@v4
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Restore vendored StikJIT.xcframework (cache)
-        id: cache-stikjit
-        uses: actions/cache@v4
-        with:
-          path: Vendor/StikJIT.xcframework
-          key: stikjit-xcframework-${{ runner.os }}
-
-      - name: Note on StikJIT.xcframework
-        if: steps.cache-stikjit.outputs.cache-hit != 'true'
+      - name: Build StikJIT framework
         run: |
-          echo "Vendor/StikJIT.xcframework isn't cached/present."
-          echo "This job will still generate and type-check the project," \
-               "but a full build requires building StikJIT.xcframework" \
-               "per https://github.com/StikDebug/StikJIT#build and" \
-               "committing it to the cache (or Vendor/) first."
+          git clone --depth 1 https://github.com/StikDebug/StikJIT.git /tmp/StikJIT
+          cd /tmp/StikJIT
+          xcodegen generate
+          xcodebuild archive \
+            -scheme StikJIT \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/StikJIT.xcarchive \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
+            CODE_SIGNING_ALLOWED=NO
+          xcodebuild -create-xcframework \
+            -framework build/StikJIT.xcarchive/Products/Library/Frameworks/StikJIT.framework \
+            -output StikJIT.xcframework
 
-      - name: Generate Xcode project
+      - name: Add StikJIT to PocketJIT
+        run: |
+          mkdir -p Vendor
+          cp -R /tmp/StikJIT/StikJIT.xcframework Vendor/
+
+      - name: Generate PocketJIT project
         run: xcodegen generate
 
-      - name: Build (unsigned, simulator — compiles everything except the
-          StikJIT-dependent helper target if the framework isn't vendored)
+      - name: Build iOS app
         run: |
-          set -o pipefail
           xcodebuild build \
             -project PocketJIT.xcodeproj \
             -scheme PocketJIT \
-            -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO \
-            | xcpretty || true
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package unsigned IPA
+        run: |
+          APP="build/Build/Products/Release-iphoneos/PocketJIT.app"
+          test -d "$APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload PocketJIT-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketJIT-unsigned-IPA
+          path: PocketJIT-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
